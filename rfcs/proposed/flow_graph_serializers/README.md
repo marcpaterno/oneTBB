@@ -5,31 +5,71 @@ For example, in high-energy physics, an algorithm might reconstruct physics trac
 If the algorithm is not threadsafe, a reasonable node construction could be:
 
 ``` c++
-function_node<Hits, Tracks> track_maker{g, tbb::flow::serial, [](Hits const&) -> Tracks {...}};}
+using namespace tbb;
+flow::graph g;
+flow::function_node<Hits, Tracks> track_maker{
+  g,
+  flow::serial, 
+  [](Hits const&) -> Tracks { ... }
+};
 ```
 
-where the `tbb::flow::serial` argument constrains the flow graph to execute the node body by no more than one thread at a time.
+where the `flow::serial` argument constrains the flow graph to execute the node body by no more than one thread at a time.
 
-There are cases, however, where specifying a concurrency limit of `tbb::flow::serial` is insufficient to guarantee thread-safety of the full graph.
-In particular, a thread-unsafe resource shared between two or more node bodies should not be accessed by more than one thread at a time.
+There are cases, however, where specifying a concurrency limit of `flow::serial` is insufficient to guarantee thread-safety of the full graph.
+For example, suppose `track_maker` needs exclusive access to some database connection, and another node in the graph also needs access to the same database:
 
+``` c++
+flow::function_node<Hits, Tracks> track_maker{
+  g,
+  flow::serial,
+  [](Hits const&) -> Tracks { auto a = db_unsafe_access(); ... }
+};
+flow::function_node<Signals, Clusters> cluster_maker{
+  g,
+  flow::serial, 
+  [](Signals const&) -> Clusters { auto a = db_unsafe_access(); ... }
+};
+```
 
-- We can never lose input data
+In the above, the function `db_unsafe_access()` returns a handle, providing thread-unsafe access to the database.
+To avoid data races, the function bodies of `track_maker` and `cluster_maker` must not execute at the same time.
+Achieving with flow graph such serialization between function bodies is nontrivial.
+Options include:
 
-> Short description of the idea proposed with explained motivation.
->
-> The motivation could be:
-> - Improved users experience for API changes and extensions. Code snippets to
->   showcase the benefits would be nice here.
-> - Performance improvements with the data, if available.
-> - Improved engineering practices.
->
-> Introduction may also include any additional information that sheds light on
-> the proposal, such as history of the matter, links to relevant issues and
-> discussions, etc.
+1. placing an explicit lock around the use of the database, resulting in inefficiencies in the execution of the graph,
+2. creating explicit edges between `track_maker` and `cluster_maker` even though there is not obvious data dependency between them,
+3. creating a token-based system that can limit access to a shared resource.
+
+We have implemented option 3 and describe it below in the "Implementation experience" section.
+Our proposal, however, does not mandate any implementation but suggests an API similar to:
+
+``` c++
+class DB { ... };
+auto& db_resource = flow::limited_resource<DB>(g, 1); // Only 1 DB "token" allowed in the entire graph 
+
+flow::function_node<Hits, Tracks> track_maker{
+  g,
+  db_resource,
+  [](Hits const&) -> Tracks { auto a = db_unsafe_access(); ... }
+};
+flow::function_node<Signals, Clusters> cluster_maker{
+  g,
+  db_resource, 
+  [](Signals const&) -> Clusters { auto a = db_unsafe_access(); ... }
+};
+```
+
+where `DB` is a user-provided class (to described later), and `db_resource` represents a limited resource to which both `track_maker` and `cluster_maker` require sole access.
 
 ## Proposal
 
+> [!NOTE]
+> Although we focus on the `flow::function_node` class template in this proposal, the concepts discussed here apply to nearly any flow-graph node that accepts a user-provided function body.
+
+
+- We can never lose input data
+  
 Different token types that can carry state.
 
 ``` c++
