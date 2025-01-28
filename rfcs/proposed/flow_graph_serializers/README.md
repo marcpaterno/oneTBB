@@ -17,7 +17,7 @@ flow::function_node<Hits, Tracks> track_maker{
 where the `flow::serial` argument constrains the flow graph to execute the node body by no more than one thread at a time.
 
 There are cases, however, where specifying a concurrency limit of `flow::serial` is insufficient to guarantee thread-safety of the full graph.
-For example, suppose `track_maker` needs exclusive access to some database connection, and another node in the graph also needs access to the same database:
+For example, suppose `track_maker` needs exclusive access to some database connection, and another node `cluster_maker` also needs access to the same database:
 
 ``` c++
 flow::function_node<Hits, Tracks> track_maker{
@@ -73,18 +73,20 @@ where `DB` is a user-provided class (to described later), and `db_resource` repr
 Different token types that can carry state.
 
 ``` c++
-auto& gpu_resource = tbb::flow::serialized_resource<GPU>(g, 2);
-auto& root_resource = tbb::flow::serialized_resource<ROOT>(g, 1);
+auto& gpu_resource = flow::limited_resource<GPU>(g, 2);
+auto& root_resource = flow::limited_resource<ROOT>(g, 1);
 
-function_node<
-  tuple<Hits, Calib>,
+flow::function_node<
+  Hits,
   Tracks,
   tuple<GPU, ROOT>> fn{g,
                        make_tuple(gpu_resource, root_resource),
-                       [](tuple<Hits, Calib> const&, tuple<GPU, ROOT>) -> Tracks { ... }
+                       [](Hits const&, tuple<GPU, ROOT>) -> Tracks { ... }
                       };
 
 ```
+
+### Resource tokens with payloads
 
 > A full and detailed description of the proposal with highlighted consequences.
 >
@@ -96,6 +98,8 @@ function_node<
 > declarations.
 >
 ## Implementation experience
+
+
 
 ## Future work
 
