@@ -45,8 +45,7 @@ We have implemented option 3 and describe it below in the "Implementation experi
 Our proposal, however, does not mandate any implementation but suggests an API similar to:
 
 ``` c++
-class DB { ... };
-auto& db_resource = flow::limited_resource<DB>(g, 1); // Only 1 DB "token" allowed in the entire graph 
+auto& db_resource = flow::limited_resource(g, 1); // Only 1 database "token" allowed in the entire graph 
 
 flow::function_node<Hits, Tracks> track_maker{
   g,
@@ -60,17 +59,16 @@ flow::function_node<Signals, Clusters> cluster_maker{
 };
 ```
 
-where `DB` is a user-provided class (to described later), and `db_resource` represents a limited resource to which both `track_maker` and `cluster_maker` require sole access.
+where `db_resource` represents a limited resource to which both `track_maker` and `cluster_maker` require sole access.
 
 ## Proposal
 
 > [!NOTE]
 > Although we focus on the `flow::function_node` class template in this proposal, the concepts discussed here apply to nearly any flow-graph node that accepts a user-provided function body.
 
-
-- We can never lose input data
-  
-Different token types that can carry state.
+Our proposal consists of: 
+1. Introducing the equivalent of a `flow::limited_resource` class template that, when connected with another node, ensures limited access to the resource it represents.
+2. Adding `flow::function_node` constructors that allow the specification of limited resource nodes instead of a `concurrency` value.
 
 ``` c++
 auto& gpu_resource = flow::limited_resource<GPU>(g, 2);
@@ -85,8 +83,34 @@ flow::function_node<
                       };
 
 ```
+### `flow::limited_resource` class template
 
-### Resource tokens with payloads
+The `flow::limited_resource` class template heuristically looks like:
+
+```c++
+template <typename Resource = /* implementation-defined */>
+class limited_resource {
+public:
+  template <typename... Ts>
+  limited_resource(flow::graph&, Ts... args_to_Resource_ctor);
+};
+```
+
+where `Resource` represents a policy class.
+
+#### Default `Resource` policy
+
+For serialized nodes that do not need to access details of the resource, a default policy can be provided:
+
+```c++
+flow::limited_resource f{g, 2}; // Is there a use case for needing more than one token but not having access to the internals?
+```
+
+#### User-defined `Resource` policies
+
+### Resource handles
+
+Different token types that can carry state.
 
 > A full and detailed description of the proposal with highlighted consequences.
 >
@@ -99,7 +123,12 @@ flow::function_node<
 >
 ## Implementation experience
 
+The image below depicts a system constructed implemented within the https://github.com/knoepfel/meld-serial repository.
 
+![Demonstration of token-based serialization system.](function-serialization.png)
+
+
+- We can never lose input data
 
 ## Future work
 
